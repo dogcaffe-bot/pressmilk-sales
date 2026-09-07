@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Press&milk OCR診断</title>
 <style>
-body{font-family:system-ui,-apple-system,"Noto Sans JP",sans-serif;background:#f4f3ef;margin:0;color:#171717}.wrap{max-width:720px;margin:auto;padding:16px}.card{background:#fff;border:1px solid #ddd;border-radius:16px;padding:16px;margin:12px 0}button{width:100%;padding:14px;margin:6px 0;border-radius:12px;border:1px solid #222;background:#111;color:#fff;font-weight:700}input{width:100%;padding:12px}.status{white-space:pre-wrap;word-break:break-word;border-radius:10px;padding:12px;background:#fff4df;margin-top:10px;font-size:13px}pre{white-space:pre-wrap;word-break:break-word;font-size:12px}.new{background:#263238}canvas{max-width:100%;height:auto;margin-top:10px;border:1px solid #ddd;display:none}</style>
+body{font-family:system-ui,-apple-system,"Noto Sans JP",sans-serif;background:#f4f3ef;margin:0;color:#171717}.wrap{max-width:720px;margin:auto;padding:16px}.card{background:#fff;border:1px solid #ddd;border-radius:16px;padding:16px;margin:12px 0}button{width:100%;padding:14px;margin:6px 0;border-radius:12px;border:1px solid #222;background:#111;color:#fff;font-weight:700}input{width:100%;padding:12px}.status{white-space:pre-wrap;word-break:break-word;border-radius:10px;padding:12px;background:#fff4df;margin-top:10px;font-size:13px}pre{white-space:pre-wrap;word-break:break-word;font-size:12px}.new{background:#263238}.best{background:#0d47a1}canvas{max-width:100%;height:auto;margin-top:10px;border:1px solid #ddd;display:none}.result{display:none;margin-top:14px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.box{border:1px solid #ddd;border-radius:10px;padding:10px}.box b{display:block;font-size:12px;color:#666}.box span{font-size:20px;font-weight:700}.note{font-size:12px;color:#666;margin-top:8px}
+</style>
 </head>
 <body><div class="wrap">
 <h2>Press&milk OCR診断</h2>
@@ -15,95 +16,99 @@ body{font-family:system-ui,-apple-system,"Noto Sans JP",sans-serif;background:#f
 <button id="defaultBtn">① 通常方式でOCRテスト</button>
 <button id="pinnedBtn">② 固定CDN方式でOCRテスト</button>
 <button id="receiptBtn" class="new">③ レシート補正版でOCRテスト</button>
+<button id="storesBtn" class="best">④ STORES金額専用テスト</button>
 <div id="status" class="status">待機中</div>
+<div id="result" class="result"><div class="grid">
+<div class="box"><b>日付</b><span id="rDate">-</span></div>
+<div class="box"><b>総売上</b><span id="rGross">-</span></div>
+<div class="box"><b>値引額</b><span id="rDiscount">-</span></div>
+<div class="box"><b>純売上（税込）</b><span id="rNet">-</span></div>
+<div class="box"><b>純売上（税抜）</b><span id="rEx">-</span></div>
+<div class="box"><b>消費税</b><span id="rTax">-</span></div>
+<div class="box"><b>現金売上</b><span id="rCash">-</span></div>
+<div class="box"><b>キャッシュレス</b><span id="rCashless">-</span></div>
+</div><div class="note">④は文字全体をきれいに読むのではなく、必要な数字だけを取りに行きます。総売上・税抜・キャッシュレスは他の数字からの計算も使います。</div></div>
 <canvas id="preview"></canvas>
 <pre id="out"></pre>
 </div></div>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.5/dist/tesseract.min.js"></script>
 <script>
-const f=document.getElementById('file'), st=document.getElementById('status'), out=document.getElementById('out'), preview=document.getElementById('preview');
+const f=document.getElementById('file'), st=document.getElementById('status'), out=document.getElementById('out'), preview=document.getElementById('preview'), result=document.getElementById('result');
 function log(m){ if(m && m.status) st.textContent='進行状況: '+m.status+(m.progress!=null?' '+Math.round(m.progress*100)+'%':''); }
+function yen(v){return Number.isFinite(v)?'¥'+v.toLocaleString('ja-JP'):'-'}
+function setResult(id,v,isMoney=true){document.getElementById(id).textContent=isMoney?yen(v):(v||'-')}
+function norm(s){return (s||'').replace(/[\sー―—_・:：.。()（）【】\[\]]/g,'').replace(/[売責實]/g,'売').replace(/[額客容]/g,'額')}
+function parseMoneyText(s){
+  const a=(s||'').replace(/[OoＯo]/g,'0').replace(/[Il｜]/g,'1').match(/\d[\d,\.]{0,10}/g)||[];
+  const vals=a.map(x=>parseInt(x.replace(/[^0-9]/g,''),10)).filter(x=>Number.isFinite(x));
+  return vals.length?Math.max(...vals):null;
+}
 async function run(mode){
-  out.textContent=''; preview.style.display='none';
+  out.textContent=''; result.style.display='none'; preview.style.display='none';
   const file=f.files[0];
   if(!file){st.textContent='写真を1枚選んでください';return;}
   st.textContent='Tesseract: '+(window.Tesseract?'読込OK':'読込失敗')+'\n方式: '+mode+'\n開始中…';
   let worker;
   try{
-    if(mode==='通常'){
-      worker=await Tesseract.createWorker('jpn',1,{logger:log});
-    }else{
-      worker=await Tesseract.createWorker('jpn',1,{workerPath:'https://cdn.jsdelivr.net/npm/tesseract.js@5.0.5/dist/worker.min.js',corePath:'https://cdn.jsdelivr.net/npm/tesseract.js-core@v5.0.0',cacheMethod:'none',logger:log});
-    }
+    if(mode==='通常') worker=await Tesseract.createWorker('jpn',1,{logger:log});
+    else worker=await Tesseract.createWorker('jpn',1,{workerPath:'https://cdn.jsdelivr.net/npm/tesseract.js@5.0.5/dist/worker.min.js',corePath:'https://cdn.jsdelivr.net/npm/tesseract.js-core@v5.0.0',cacheMethod:'none',logger:log});
     st.textContent='画像認識中…';
     const r=await worker.recognize(file);
-    st.textContent='成功';
-    out.textContent=(r.data.text||'').slice(0,4000);
-    await worker.terminate();
-  }catch(e){
-    console.error(e);
-    st.textContent='失敗\n'+(e && (e.stack||e.message||String(e)) ? (e.stack||e.message||String(e)) : '不明なエラー');
-    try{if(worker) await worker.terminate();}catch(_){}
-  }
+    st.textContent='成功'; out.textContent=(r.data.text||'').slice(0,4000); await worker.terminate();
+  }catch(e){console.error(e);st.textContent='失敗\n'+(e.stack||e.message||String(e));try{if(worker)await worker.terminate();}catch(_){}}
 }
-
 async function loadBitmap(file){
-  try{return await createImageBitmap(file,{imageOrientation:'from-image'});}catch(e){
-    return await new Promise((resolve,reject)=>{const img=new Image();const u=URL.createObjectURL(file);img.onload=()=>{URL.revokeObjectURL(u);resolve(img)};img.onerror=reject;img.src=u;});
-  }
+  try{return await createImageBitmap(file,{imageOrientation:'from-image'});}catch(e){return await new Promise((resolve,reject)=>{const img=new Image();const u=URL.createObjectURL(file);img.onload=()=>{URL.revokeObjectURL(u);resolve(img)};img.onerror=reject;img.src=u;});}
 }
-
 async function makeReceiptCanvas(file){
-  const img=await loadBitmap(file);
-  const sw=img.width, sh=img.height;
-  let targetW=sw;
-  if(sw<1400) targetW=1400;
-  if(sw>1800) targetW=1800;
-  let scale=targetW/sw;
-  let targetH=Math.round(sh*scale);
-  if(targetH>9000){scale=9000/sh;targetW=Math.round(sw*scale);targetH=9000;}
-  const c=document.createElement('canvas'); c.width=targetW; c.height=targetH;
-  const ctx=c.getContext('2d',{willReadFrequently:true});
-  ctx.imageSmoothingEnabled=true; ctx.imageSmoothingQuality='high';
-  ctx.drawImage(img,0,0,targetW,targetH);
-  const im=ctx.getImageData(0,0,targetW,targetH), d=im.data;
-  let min=255,max=0;
-  for(let i=0;i<d.length;i+=16){const g=Math.round(.299*d[i]+.587*d[i+1]+.114*d[i+2]); if(g<min)min=g;if(g>max)max=g;}
-  if(max-min<70){min=Math.max(0,min-20);max=Math.min(255,max+20);}
-  const den=Math.max(30,max-min);
-  for(let i=0;i<d.length;i+=4){let g=Math.round(.299*d[i]+.587*d[i+1]+.114*d[i+2]);g=Math.round((g-min)*255/den);g=Math.max(0,Math.min(255,g));g=Math.round((g-128)*1.25+128);g=Math.max(0,Math.min(255,g));d[i]=d[i+1]=d[i+2]=g;d[i+3]=255;}
-  ctx.putImageData(im,0,0);
-  return c;
+  const img=await loadBitmap(file), sw=img.width, sh=img.height;
+  let targetW=Math.max(1500,Math.min(2000,sw)), scale=targetW/sw, targetH=Math.round(sh*scale);
+  if(targetH>10000){scale=10000/sh;targetW=Math.round(sw*scale);targetH=10000;}
+  const c=document.createElement('canvas');c.width=targetW;c.height=targetH;
+  const ctx=c.getContext('2d',{willReadFrequently:true});ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';ctx.drawImage(img,0,0,targetW,targetH);
+  const im=ctx.getImageData(0,0,targetW,targetH),d=im.data;let min=255,max=0;
+  for(let i=0;i<d.length;i+=16){const g=Math.round(.299*d[i]+.587*d[i+1]+.114*d[i+2]);if(g<min)min=g;if(g>max)max=g;}
+  const den=Math.max(40,max-min);
+  for(let i=0;i<d.length;i+=4){let g=Math.round(.299*d[i]+.587*d[i+1]+.114*d[i+2]);g=Math.round((g-min)*255/den);g=Math.round((g-128)*1.35+128);g=Math.max(0,Math.min(255,g));d[i]=d[i+1]=d[i+2]=g;d[i+3]=255;}
+  ctx.putImageData(im,0,0);return c;
 }
-
 async function runReceipt(){
-  out.textContent='';
-  const file=f.files[0]; if(!file){st.textContent='写真を1枚選んでください';return;}
-  let worker;
-  try{
-    st.textContent='レシート画像を補正中…';
-    const c=await makeReceiptCanvas(file);
-    preview.width=c.width; preview.height=c.height; preview.getContext('2d').drawImage(c,0,0); preview.style.display='block';
-    worker=await Tesseract.createWorker('jpn',1,{logger:log});
-    await worker.setParameters({tessedit_pageseg_mode:'6',preserve_interword_spaces:'1',user_defined_dpi:'300'});
-    const chunkH=1900, overlap=100; let y=0, texts=[], part=1;
-    while(y<c.height){
-      const h=Math.min(chunkH,c.height-y);
-      const partCanvas=document.createElement('canvas');partCanvas.width=c.width;partCanvas.height=h;
-      partCanvas.getContext('2d').drawImage(c,0,y,c.width,h,0,0,c.width,h);
-      st.textContent='補正版OCR中… '+part+'枚目';
-      const r=await worker.recognize(partCanvas);
-      texts.push(r.data.text||'');
-      if(y+h>=c.height)break;
-      y+=chunkH-overlap;part++;
-    }
-    await worker.terminate();
-    st.textContent='成功（補正版）';
-    out.textContent=texts.join('\n').slice(0,7000);
-  }catch(e){console.error(e);st.textContent='失敗\n'+(e.stack||e.message||String(e));try{if(worker)await worker.terminate();}catch(_){} }
+  out.textContent='';result.style.display='none';const file=f.files[0];if(!file){st.textContent='写真を1枚選んでください';return;}let worker;
+  try{st.textContent='レシート画像を補正中…';const c=await makeReceiptCanvas(file);preview.width=c.width;preview.height=c.height;preview.getContext('2d').drawImage(c,0,0);preview.style.display='block';worker=await Tesseract.createWorker('jpn',1,{logger:log});await worker.setParameters({tessedit_pageseg_mode:'6',preserve_interword_spaces:'1',user_defined_dpi:'300',thresholding_method:'1'});const chunkH=1900,overlap=100;let y=0,texts=[],part=1;while(y<c.height){const h=Math.min(chunkH,c.height-y),pc=document.createElement('canvas');pc.width=c.width;pc.height=h;pc.getContext('2d').drawImage(c,0,y,c.width,h,0,0,c.width,h);st.textContent='補正版OCR中… '+part+'枚目';const r=await worker.recognize(pc);texts.push(r.data.text||'');if(y+h>=c.height)break;y+=chunkH-overlap;part++;}await worker.terminate();st.textContent='成功（補正版）';out.textContent=texts.join('\n').slice(0,7000);}catch(e){console.error(e);st.textContent='失敗\n'+(e.stack||e.message||String(e));try{if(worker)await worker.terminate();}catch(_){}}
 }
-
+function parseTSV(tsv){
+  const rows=(tsv||'').split(/\r?\n/).slice(1).map(x=>x.split('\t')).filter(x=>x.length>=12&&x[0]==='5');
+  const groups=new Map();
+  for(const r of rows){const key=[r[1],r[2],r[3],r[4]].join('-');if(!groups.has(key))groups.set(key,[]);groups.get(key).push({left:+r[6],top:+r[7],width:+r[8],height:+r[9],conf:+r[10],text:r.slice(11).join('\t')});}
+  const lines=[];for(const words of groups.values()){words.sort((a,b)=>a.left-b.left);const text=words.map(w=>w.text).join(' ');const left=Math.min(...words.map(w=>w.left)),top=Math.min(...words.map(w=>w.top)),right=Math.max(...words.map(w=>w.left+w.width)),bottom=Math.max(...words.map(w=>w.top+w.height));lines.push({text,left,top,right,bottom});}return lines.sort((a,b)=>a.top-b.top);
+}
+function bestLine(lines,terms,exclude=[]){
+  let best=null,bestScore=-1;for(const line of lines){const n=norm(line.text);if(exclude.some(x=>n.includes(x)))continue;let score=0;for(const t of terms){if(n.includes(t))score+=t.length*10;}if(score>bestScore){bestScore=score;best=line;}}return bestScore>0?best:null;
+}
+async function numericAt(worker,c,line,name){
+  if(!line)return null;const pad=Math.max(18,Math.round((line.bottom-line.top)*.65));const left=Math.max(Math.floor(c.width*.32),Math.min(line.right+5,Math.floor(c.width*.55)));const top=Math.max(0,line.top-pad);const width=c.width-left-8,height=Math.min(c.height-top,(line.bottom-line.top)+pad*2);
+  const pc=document.createElement('canvas'),scale=2.2;pc.width=Math.round(width*scale);pc.height=Math.round(height*scale);const ctx=pc.getContext('2d',{willReadFrequently:true});ctx.drawImage(c,left,top,width,height,0,0,pc.width,pc.height);
+  const im=ctx.getImageData(0,0,pc.width,pc.height),d=im.data;for(let i=0;i<d.length;i+=4){const g=d[i];const v=g<185?0:255;d[i]=d[i+1]=d[i+2]=v;}ctx.putImageData(im,0,0);
+  st.textContent='金額を再読取中… '+name;await worker.setParameters({tessedit_pageseg_mode:'7',tessedit_char_whitelist:'0123456789,.',user_defined_dpi:'300'});const r=await worker.recognize(pc);return parseMoneyText(r.data.text);
+}
+async function runStores(){
+  out.textContent='';result.style.display='none';preview.style.display='none';const file=f.files[0];if(!file){st.textContent='写真を1枚選んでください';return;}let worker;
+  try{
+    st.textContent='STORESレシートを解析中…';const c=await makeReceiptCanvas(file);preview.width=c.width;preview.height=c.height;preview.getContext('2d').drawImage(c,0,0);preview.style.display='block';
+    worker=await Tesseract.createWorker('jpn',1,{logger:log});await worker.setParameters({tessedit_pageseg_mode:'3',preserve_interword_spaces:'1',user_defined_dpi:'300',thresholding_method:'1',tessedit_char_whitelist:''});
+    const topH=Math.min(c.height,Math.round(c.height*.68));const r=await worker.recognize(c,{rectangle:{left:0,top:0,width:c.width,height:topH}},{tsv:true});const text=r.data.text||'',lines=parseTSV(r.data.tsv||'');
+    const m=text.match(/(20\d{2})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日/);const date=m?`${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`:'';
+    const lNet=bestLine(lines,['純売上'],['税抜']);const lDisc=bestLine(lines,['割引額']);const lTax=bestLine(lines,['税額'],['税額8','税額10']);const lCash=bestLine(lines,['現金売上']);
+    let net=await numericAt(worker,c,lNet,'純売上');let discount=await numericAt(worker,c,lDisc,'値引額');let tax=await numericAt(worker,c,lTax,'消費税');let cash=await numericAt(worker,c,lCash,'現金売上');
+    // 全文側で数字が取れている場合の保険
+    if(net==null&&lNet)net=parseMoneyText(lNet.text);if(discount==null&&lDisc)discount=parseMoneyText(lDisc.text);if(tax==null&&lTax)tax=parseMoneyText(lTax.text);if(cash==null&&lCash)cash=parseMoneyText(lCash.text);
+    const gross=(Number.isFinite(net)&&Number.isFinite(discount))?net+discount:null;const ex=(Number.isFinite(net)&&Number.isFinite(tax))?net-tax:null;const cashless=(Number.isFinite(net)&&Number.isFinite(cash))?net-cash:null;
+    setResult('rDate',date,false);setResult('rGross',gross);setResult('rDiscount',discount);setResult('rNet',net);setResult('rEx',ex);setResult('rTax',tax);setResult('rCash',cash);setResult('rCashless',cashless);result.style.display='block';
+    await worker.terminate();st.textContent='完了：必要な数字だけ抽出しました';out.textContent='認識した行\n'+[lNet&&'純売上 → '+lNet.text,lDisc&&'割引額 → '+lDisc.text,lTax&&'税額 → '+lTax.text,lCash&&'現金売上 → '+lCash.text].filter(Boolean).join('\n')+'\n\n※総売上=純売上+値引額、税抜=純売上-税額、キャッシュレス=純売上-現金売上 で補完しています。';
+  }catch(e){console.error(e);st.textContent='失敗\n'+(e.stack||e.message||String(e));try{if(worker)await worker.terminate();}catch(_){}}
+}
 document.getElementById('defaultBtn').onclick=()=>run('通常');
 document.getElementById('pinnedBtn').onclick=()=>run('固定CDN');
 document.getElementById('receiptBtn').onclick=runReceipt;
+document.getElementById('storesBtn').onclick=runStores;
 </script></body></html>
