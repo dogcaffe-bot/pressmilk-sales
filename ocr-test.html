@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Press&milk OCR診断</title>
 <style>
-body{font-family:system-ui,-apple-system,"Noto Sans JP",sans-serif;background:#f4f3ef;margin:0;color:#171717}.wrap{max-width:720px;margin:auto;padding:16px}.card{background:#fff;border:1px solid #ddd;border-radius:16px;padding:16px;margin:12px 0}button{width:100%;padding:14px;margin:6px 0;border-radius:12px;border:1px solid #222;background:#111;color:#fff;font-weight:700}input{width:100%;padding:12px}.status{white-space:pre-wrap;word-break:break-word;border-radius:10px;padding:12px;background:#fff4df;margin-top:10px;font-size:13px}pre{white-space:pre-wrap;word-break:break-word;font-size:12px}</style>
+body{font-family:system-ui,-apple-system,"Noto Sans JP",sans-serif;background:#f4f3ef;margin:0;color:#171717}.wrap{max-width:720px;margin:auto;padding:16px}.card{background:#fff;border:1px solid #ddd;border-radius:16px;padding:16px;margin:12px 0}button{width:100%;padding:14px;margin:6px 0;border-radius:12px;border:1px solid #222;background:#111;color:#fff;font-weight:700}input{width:100%;padding:12px}.status{white-space:pre-wrap;word-break:break-word;border-radius:10px;padding:12px;background:#fff4df;margin-top:10px;font-size:13px}pre{white-space:pre-wrap;word-break:break-word;font-size:12px}.new{background:#263238}canvas{max-width:100%;height:auto;margin-top:10px;border:1px solid #ddd;display:none}</style>
 </head>
 <body><div class="wrap">
 <h2>Press&milk OCR診断</h2>
@@ -14,15 +14,17 @@ body{font-family:system-ui,-apple-system,"Noto Sans JP",sans-serif;background:#f
 <input id="file" type="file" accept="image/*">
 <button id="defaultBtn">① 通常方式でOCRテスト</button>
 <button id="pinnedBtn">② 固定CDN方式でOCRテスト</button>
+<button id="receiptBtn" class="new">③ レシート補正版でOCRテスト</button>
 <div id="status" class="status">待機中</div>
+<canvas id="preview"></canvas>
 <pre id="out"></pre>
 </div></div>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.5/dist/tesseract.min.js"></script>
 <script>
-const f=document.getElementById('file'), st=document.getElementById('status'), out=document.getElementById('out');
+const f=document.getElementById('file'), st=document.getElementById('status'), out=document.getElementById('out'), preview=document.getElementById('preview');
 function log(m){ if(m && m.status) st.textContent='進行状況: '+m.status+(m.progress!=null?' '+Math.round(m.progress*100)+'%':''); }
 async function run(mode){
-  out.textContent='';
+  out.textContent=''; preview.style.display='none';
   const file=f.files[0];
   if(!file){st.textContent='写真を1枚選んでください';return;}
   st.textContent='Tesseract: '+(window.Tesseract?'読込OK':'読込失敗')+'\n方式: '+mode+'\n開始中…';
@@ -36,7 +38,7 @@ async function run(mode){
     st.textContent='画像認識中…';
     const r=await worker.recognize(file);
     st.textContent='成功';
-    out.textContent=(r.data.text||'').slice(0,2000);
+    out.textContent=(r.data.text||'').slice(0,4000);
     await worker.terminate();
   }catch(e){
     console.error(e);
@@ -44,6 +46,64 @@ async function run(mode){
     try{if(worker) await worker.terminate();}catch(_){}
   }
 }
+
+async function loadBitmap(file){
+  try{return await createImageBitmap(file,{imageOrientation:'from-image'});}catch(e){
+    return await new Promise((resolve,reject)=>{const img=new Image();const u=URL.createObjectURL(file);img.onload=()=>{URL.revokeObjectURL(u);resolve(img)};img.onerror=reject;img.src=u;});
+  }
+}
+
+async function makeReceiptCanvas(file){
+  const img=await loadBitmap(file);
+  const sw=img.width, sh=img.height;
+  let targetW=sw;
+  if(sw<1400) targetW=1400;
+  if(sw>1800) targetW=1800;
+  let scale=targetW/sw;
+  let targetH=Math.round(sh*scale);
+  if(targetH>9000){scale=9000/sh;targetW=Math.round(sw*scale);targetH=9000;}
+  const c=document.createElement('canvas'); c.width=targetW; c.height=targetH;
+  const ctx=c.getContext('2d',{willReadFrequently:true});
+  ctx.imageSmoothingEnabled=true; ctx.imageSmoothingQuality='high';
+  ctx.drawImage(img,0,0,targetW,targetH);
+  const im=ctx.getImageData(0,0,targetW,targetH), d=im.data;
+  let min=255,max=0;
+  for(let i=0;i<d.length;i+=16){const g=Math.round(.299*d[i]+.587*d[i+1]+.114*d[i+2]); if(g<min)min=g;if(g>max)max=g;}
+  if(max-min<70){min=Math.max(0,min-20);max=Math.min(255,max+20);}
+  const den=Math.max(30,max-min);
+  for(let i=0;i<d.length;i+=4){let g=Math.round(.299*d[i]+.587*d[i+1]+.114*d[i+2]);g=Math.round((g-min)*255/den);g=Math.max(0,Math.min(255,g));g=Math.round((g-128)*1.25+128);g=Math.max(0,Math.min(255,g));d[i]=d[i+1]=d[i+2]=g;d[i+3]=255;}
+  ctx.putImageData(im,0,0);
+  return c;
+}
+
+async function runReceipt(){
+  out.textContent='';
+  const file=f.files[0]; if(!file){st.textContent='写真を1枚選んでください';return;}
+  let worker;
+  try{
+    st.textContent='レシート画像を補正中…';
+    const c=await makeReceiptCanvas(file);
+    preview.width=c.width; preview.height=c.height; preview.getContext('2d').drawImage(c,0,0); preview.style.display='block';
+    worker=await Tesseract.createWorker('jpn',1,{logger:log});
+    await worker.setParameters({tessedit_pageseg_mode:'6',preserve_interword_spaces:'1',user_defined_dpi:'300'});
+    const chunkH=1900, overlap=100; let y=0, texts=[], part=1;
+    while(y<c.height){
+      const h=Math.min(chunkH,c.height-y);
+      const partCanvas=document.createElement('canvas');partCanvas.width=c.width;partCanvas.height=h;
+      partCanvas.getContext('2d').drawImage(c,0,y,c.width,h,0,0,c.width,h);
+      st.textContent='補正版OCR中… '+part+'枚目';
+      const r=await worker.recognize(partCanvas);
+      texts.push(r.data.text||'');
+      if(y+h>=c.height)break;
+      y+=chunkH-overlap;part++;
+    }
+    await worker.terminate();
+    st.textContent='成功（補正版）';
+    out.textContent=texts.join('\n').slice(0,7000);
+  }catch(e){console.error(e);st.textContent='失敗\n'+(e.stack||e.message||String(e));try{if(worker)await worker.terminate();}catch(_){} }
+}
+
 document.getElementById('defaultBtn').onclick=()=>run('通常');
 document.getElementById('pinnedBtn').onclick=()=>run('固定CDN');
+document.getElementById('receiptBtn').onclick=runReceipt;
 </script></body></html>
